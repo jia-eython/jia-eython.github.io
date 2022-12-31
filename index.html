@@ -1,318 +1,169 @@
-﻿<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>新年快乐</title>
-
-<style>
-/* basic styles for black background and crosshair cursor */
-body {
-	background: #000;
-	margin: 0;
-}
-
-canvas {
-	cursor: crosshair;
-	display: block;
-}
-</style>
-
-</head>
-<body>
-
-<canvas id="canvas"></canvas>
-
-<script>
-// when animating on canvas, it is best to use requestAnimationFrame instead of setTimeout or setInterval
-// not supported in all browsers though and sometimes needs a prefix, so we need a shim
-window.requestAnimFrame = ( function() {
-	return window.requestAnimationFrame ||
-				window.webkitRequestAnimationFrame ||
-				window.mozRequestAnimationFrame ||
-				function( callback ) {
-					window.setTimeout( callback, 1000 / 60 );
-				};
-})();
-
-// now we will setup our basic variables for the demo
-var canvas = document.getElementById( 'canvas' ),
-		ctx = canvas.getContext( '2d' ),
-		// full screen dimensions
-		cw = window.innerWidth,
-		ch = window.innerHeight,
-		// firework collection
-		fireworks = [],
-		// particle collection
-		particles = [],
-		// starting hue
-		hue = 120,
-		// when launching fireworks with a click, too many get launched at once without a limiter, one launch per 5 loop ticks
-		limiterTotal = 5,
-		limiterTick = 0,
-		// this will time the auto launches of fireworks, one launch per 80 loop ticks
-		timerTotal = 80,
-		timerTick = 0,
-		mousedown = false,
-		// mouse x coordinate,
-		mx,
-		// mouse y coordinate
-		my;
-		
-// set canvas dimensions
-canvas.width = cw;
-canvas.height = ch;
-
-// now we are going to setup our function placeholders for the entire demo
-
-// get a random number within a range
-function random( min, max ) {
-	return Math.random() * ( max - min ) + min;
-}
-
-// calculate the distance between two points
-function calculateDistance( p1x, p1y, p2x, p2y ) {
-	var xDistance = p1x - p2x,
-			yDistance = p1y - p2y;
-	return Math.sqrt( Math.pow( xDistance, 2 ) + Math.pow( yDistance, 2 ) );
-}
-
-// create firework
-function Firework( sx, sy, tx, ty ) {
-	// actual coordinates
-	this.x = sx;
-	this.y = sy;
-	// starting coordinates
-	this.sx = sx;
-	this.sy = sy;
-	// target coordinates
-	this.tx = tx;
-	this.ty = ty;
-	// distance from starting point to target
-	this.distanceToTarget = calculateDistance( sx, sy, tx, ty );
-	this.distanceTraveled = 0;
-	// track the past coordinates of each firework to create a trail effect, increase the coordinate count to create more prominent trails
-	this.coordinates = [];
-	this.coordinateCount = 3;
-	// populate initial coordinate collection with the current coordinates
-	while( this.coordinateCount-- ) {
-		this.coordinates.push( [ this.x, this.y ] );
-	}
-	this.angle = Math.atan2( ty - sy, tx - sx );
-	this.speed = 2;
-	this.acceleration = 1.05;
-	this.brightness = random( 50, 70 );
-	// circle target indicator radius
-	this.targetRadius = 1;
-}
-
-// update firework
-Firework.prototype.update = function( index ) {
-	// remove last item in coordinates array
-	this.coordinates.pop();
-	// add current coordinates to the start of the array
-	this.coordinates.unshift( [ this.x, this.y ] );
-	
-	// cycle the circle target indicator radius
-	if( this.targetRadius < 8 ) {
-		this.targetRadius += 0.3;
-	} else {
-		this.targetRadius = 1;
-	}
-	
-	// speed up the firework
-	this.speed *= this.acceleration;
-	
-	// get the current velocities based on angle and speed
-	var vx = Math.cos( this.angle ) * this.speed,
-			vy = Math.sin( this.angle ) * this.speed;
-	// how far will the firework have traveled with velocities applied?
-	this.distanceTraveled = calculateDistance( this.sx, this.sy, this.x + vx, this.y + vy );
-	
-	// if the distance traveled, including velocities, is greater than the initial distance to the target, then the target has been reached
-	if( this.distanceTraveled >= this.distanceToTarget ) {
-		createParticles( this.tx, this.ty );
-		// remove the firework, use the index passed into the update function to determine which to remove
-		fireworks.splice( index, 1 );
-	} else {
-		// target not reached, keep traveling
-		this.x += vx;
-		this.y += vy;
-	}
-}
-
-// draw firework
-Firework.prototype.draw = function() {
-	ctx.beginPath();
-	// move to the last tracked coordinate in the set, then draw a line to the current x and y
-	ctx.moveTo( this.coordinates[ this.coordinates.length - 1][ 0 ], this.coordinates[ this.coordinates.length - 1][ 1 ] );
-	ctx.lineTo( this.x, this.y );
-	ctx.strokeStyle = 'hsl(' + hue + ', 100%, ' + this.brightness + '%)';
-	ctx.stroke();
-	
-	ctx.beginPath();
-	// draw the target for this firework with a pulsing circle
-	ctx.arc( this.tx, this.ty, this.targetRadius, 0, Math.PI * 2 );
-	ctx.stroke();
-}
-
-// create particle
-function Particle( x, y ) {
-	this.x = x;
-	this.y = y;
-	// track the past coordinates of each particle to create a trail effect, increase the coordinate count to create more prominent trails
-	this.coordinates = [];
-	this.coordinateCount = 5;
-	while( this.coordinateCount-- ) {
-		this.coordinates.push( [ this.x, this.y ] );
-	}
-	// set a random angle in all possible directions, in radians
-	this.angle = random( 0, Math.PI * 2 );
-	this.speed = random( 1, 10 );
-	// friction will slow the particle down
-	this.friction = 0.95;
-	// gravity will be applied and pull the particle down
-	this.gravity = 1;
-	// set the hue to a random number +-20 of the overall hue variable
-	this.hue = random( hue - 20, hue + 20 );
-	this.brightness = random( 50, 80 );
-	this.alpha = 1;
-	// set how fast the particle fades out
-	this.decay = random( 0.015, 0.03 );
-}
-
-// update particle
-Particle.prototype.update = function( index ) {
-	// remove last item in coordinates array
-	this.coordinates.pop();
-	// add current coordinates to the start of the array
-	this.coordinates.unshift( [ this.x, this.y ] );
-	// slow down the particle
-	this.speed *= this.friction;
-	// apply velocity
-	this.x += Math.cos( this.angle ) * this.speed;
-	this.y += Math.sin( this.angle ) * this.speed + this.gravity;
-	// fade out the particle
-	this.alpha -= this.decay;
-	
-	// remove the particle once the alpha is low enough, based on the passed in index
-	if( this.alpha <= this.decay ) {
-		particles.splice( index, 1 );
-	}
-}
-
-
-
-// draw particle
-Particle.prototype.draw = function() {
-	  
-  ctx. beginPath();
-	// move to the last tracked coordinates in the set, then draw a line to the current x and y
-	ctx.moveTo( this.coordinates[ this.coordinates.length - 1 ][ 0 ], this.coordinates[ this.coordinates.length - 1 ][ 1 ] );
-	ctx.lineTo( this.x, this.y );
-	ctx.strokeStyle = 'hsla(' + this.hue + ', 100%, ' + this.brightness + '%, ' + this.alpha + ')';
-	ctx.stroke();
-  
-  
-}
-
-// create particle group/explosion
-function createParticles( x, y ) {
-	// increase the particle count for a bigger explosion, beware of the canvas performance hit with the increased particles though
-	var particleCount = 30;
-	while( particleCount-- ) {
-		particles.push( new Particle( x, y ) );
-	}
-}
-
-// main demo loop
-function loop() {
-	// this function will run endlessly with requestAnimationFrame
-	requestAnimFrame( loop );
-	
-	// increase the hue to get different colored fireworks over time
-	hue += 0.5;
-	
-	// normally, clearRect() would be used to clear the canvas
-	// we want to create a trailing effect though
-	// setting the composite operation to destination-out will allow us to clear the canvas at a specific opacity, rather than wiping it entirely
-	ctx.globalCompositeOperation = 'destination-out';
-	// decrease the alpha property to create more prominent trails
-	ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-	ctx.fillRect( 0, 0, cw, ch );
-	// change the composite operation back to our main mode
-	// lighter creates bright highlight points as the fireworks and particles overlap each other
-	ctx.globalCompositeOperation = 'lighter';
-	
-    var text = "HAPPY BIRTHDAY CUNZHER !!";  
-  ctx.font = "50px sans-serif";
-  var textData = ctx.measureText(text);
-  ctx.fillStyle = "rgba("+parseInt(random(0,255))+","+parseInt(random(0,255))+","+parseInt(random(0,255))+",0.3)";
-  ctx.fillText(text,cw /2-textData.width/2,ch/2); 
-  
-	// loop over each firework, draw it, update it
-	var i = fireworks.length;
-	while( i-- ) {
-		fireworks[ i ].draw();
-		fireworks[ i ].update( i );
-	}
-	
-	// loop over each particle, draw it, update it
-	var i = particles.length;
-	while( i-- ) {
-		particles[ i ].draw();
-		particles[ i ].update( i );
-	}
-	
-	// launch fireworks automatically to random coordinates, when the mouse isn't down
-	if( timerTick >= timerTotal ) {
-		if( !mousedown ) {
-			// start the firework at the bottom middle of the screen, then set the random target coordinates, the random y coordinates will be set within the range of the top half of the screen
-      
-      for(var h=0;h<50;h++)
-      {
-           fireworks.push( new Firework( cw / 2, ch/2, random( 0, cw ), random( 0, ch  ) ) );
-      }
-      
-      
-			timerTick = 0;
-		}
-	} else {
-		timerTick++;
-	}
-	
-	// limit the rate at which fireworks get launched when mouse is down
-	if( limiterTick >= limiterTotal ) {
-		if( mousedown ) {
-			// start the firework at the bottom middle of the screen, then set the current mouse coordinates as the target
-			fireworks.push( new Firework( cw / 2, ch/2, mx, my ) );
-			limiterTick = 0;
-		}
-	} else {
-		limiterTick++;
-	}
-}
-
-// mouse event bindings
-// update the mouse coordinates on mousemove
-canvas.addEventListener( 'mousemove', function( e ) {
-	mx = e.pageX - canvas.offsetLeft;
-	my = e.pageY - canvas.offsetTop;
-});
-
-// toggle mousedown state and prevent canvas from being selected
-canvas.addEventListener( 'mousedown', function( e ) {
-	e.preventDefault();
-	mousedown = true;
-});
-
-canvas.addEventListener( 'mouseup', function( e ) {
-	e.preventDefault();
-	mousedown = false;
-});
-
-// once the window loads, we are ready for some fireworks!
-window.onload = loop;
-
-</script>
-</body>
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<title>
+			新年快乐
+		</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+		<meta name="mobile-web-app-capable" content="yes">
+		<meta name="apple-mobile-web-app-capable" content="yes">
+		<meta name="theme-color" content="#000000">
+		<link rel="shortcut icon" type="image/png" href="https://fireworks.nianbroken.top/NianBrokenStorage/images/favicon.png">
+		<link rel="icon" type="image/png" href="https://fireworks.nianbroken.top/NianBrokenStorage/images/favicon.png">
+		<link rel="apple-touch-icon-precomposed" href="https://fireworks.nianbroken.top/NianBrokenStorage/images/favicon.png">
+		<meta name="msapplication-TileColor" content="#000000">
+		<meta name="msapplication-TileImage" content="https://fireworks.nianbroken.top/NianBrokenStorage/images/favicon.png">
+		<link href="https://fireworks.nianbroken.top/NianBrokenStorage/fonts/css.css" rel="stylesheet">
+		<link rel="stylesheet" href="https://fireworks.nianbroken.top/NianBrokenStorage/css/style.css">
+	</head>
+	<body>
+		<!-- partial:index.partial.html -->
+		<!-- SVG Spritesheet -->
+		<div style="height: 0; width: 0; position: absolute; visibility: hidden;">
+			<svg xmlns="http://www.w3.org/2000/svg">
+				<symbol id="icon-play" viewBox="0 0 24 24">
+					<path d="M8 5v14l11-7z" />
+				</symbol>
+				<symbol id="icon-pause" viewBox="0 0 24 24">
+					<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+				</symbol>
+				<symbol id="icon-close" viewBox="0 0 24 24">
+					<path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+				</symbol>
+				<symbol id="icon-settings" viewBox="0 0 24 24">
+					<path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z" />
+				</symbol>
+				<symbol id="icon-sound-on" viewBox="0 0 24 24">
+					<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+				</symbol>
+				<symbol id="icon-sound-off" viewBox="0 0 24 24">
+					<path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z" />
+				</symbol>
+			</svg>
+		</div>
+		<!-- App -->
+		<div class="container">
+			<div class="loading-init">
+				<div class="loading-init__header">
+					加载中
+				</div>
+				<div class="loading-init__status">
+					正在装配烟花
+				</div>
+			</div>
+			<div class="stage-container remove">
+				<div class="page_two hide">
+					<div class="type_words" id="contents" style="font-size:1.15rem;line-height:1.5rem;"><p>test</p></div>
+				</div>
+				<div class="canvas-container">
+					<canvas id="trails-canvas">
+					</canvas>
+					<canvas id="main-canvas">
+					</canvas>
+				</div>
+				<div class="menu hide">
+					<div class="menu__inner-wrap">
+						<div class="btn btn--bright close-menu-btn">
+							<svg fill="white" width="24" height="24">
+								<use href="#icon-close" xlink:href="#icon-close">
+								</use>
+							</svg>
+						</div>
+						<div class="menu__header">
+							设置
+						</div>
+						<div class="menu__subheader">
+							若想了解更多信息 请点击任意标签
+						</div>
+						<form>
+							<div class="form-option form-option--select">
+								<label class="shell-type-label">
+								烟花类型
+								</label>
+								<select class="shell-type">
+								</select>
+							</div>
+							<div class="form-option form-option--select">
+								<label class="shell-size-label">
+								烟花大小
+								</label>
+								<select class="shell-size">
+								</select>
+							</div>
+							<div class="form-option form-option--select">
+								<label class="quality-ui-label">
+								画质
+								</label>
+								<select class="quality-ui">
+								</select>
+							</div>
+							<div class="form-option form-option--select">
+								<label class="sky-lighting-label">
+								照亮天空
+								</label>
+								<select class="sky-lighting">
+								</select>
+							</div>
+							<div class="form-option form-option--select">
+								<label class="scaleFactor-label">
+								缩放
+								</label>
+								<select class="scaleFactor">
+								</select>
+							</div>
+							<div class="form-option form-option--checkbox">
+								<label class="auto-launch-label">
+								自动放烟花
+								</label>
+								<input class="auto-launch" type="checkbox" />
+							</div>
+							<div class="form-option form-option--checkbox form-option--finale-mode">
+								<label class="finale-mode-label">
+								同时放更多的烟花
+								</label>
+								<input class="finale-mode" type="checkbox" />
+							</div>
+							<div class="form-option form-option--checkbox">
+								<label class="hide-controls-label">
+								隐藏控制按钮
+								</label>
+								<input class="hide-controls" type="checkbox" />
+							</div>
+							<div class="form-option form-option--checkbox form-option--fullscreen">
+								<label class="fullscreen-label">
+								全屏
+								</label>
+								<input class="fullscreen" type="checkbox" />
+							</div>
+							<div class="form-option form-option--checkbox">
+								<label class="long-exposure-label">
+								保留烟花的火花
+								</label>
+								<input class="long-exposure" type="checkbox" />
+							</div>
+						</form>
+					</div>
+				</div>
+			</div>
+			<div class="help-modal">
+				<div class="help-modal__overlay">
+				</div>
+				<div class="help-modal__dialog">
+					<div class="help-modal__header">
+					</div>
+					<div class="help-modal__body">
+					</div>
+					<button type="button" class="help-modal__close-btn">
+					关闭
+					</button>
+				</div>
+			</div>
+		</div>
+		<!-- partial -->
+		<script src='https://fireworks.nianbroken.top/NianBrokenStorage/js/fscreen.js'></script>
+		<script src='https://fireworks.nianbroken.top/NianBrokenStorage/js/Stage.js'></script>
+		<script src='https://fireworks.nianbroken.top/NianBrokenStorage/js/MyMath.js'></script>
+		<script src="https://fireworks.nianbroken.top/NianBrokenStorage/js/script.js"></script>
+	</body>
 </html>
